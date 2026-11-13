@@ -56,7 +56,8 @@ def age(ts: float | None, now: float) -> str:
 
 def kalshi_only(snap: dict, now: float) -> None:
     """Free mode: live Kalshi quotes + injuries. No sportsbook feed, so no fair value or edge."""
-    krows = [r for r in kalshi_rows(snap, max_spread=max_spread, min_size=min_size, min_volume=min_vol) if r["League"] in leagues]
+    krows = [r for r in kalshi_rows(snap, max_spread=max_spread, min_size=min_size, min_volume=min_vol,
+                                    fee_rate=cfg.fee_rate, fee_mult=cfg.fee_multiplier) if r["League"] in leagues]
     tradable = [r for r in krows if not r["Filtered"]]
     arbs = [a for a in ladder_arbs(snap, cfg.fee_rate, cfg.fee_multiplier) if a["League"] in leagues]
     st.title("Prop Advisor: live Kalshi player props")
@@ -77,18 +78,25 @@ def kalshi_only(snap: dict, now: float) -> None:
         shown = krows if show_filtered else tradable
         if shown:
             cols = [k for k in shown[0] if k not in ("Filtered", "Kalshi Contract", "YES bid (c)", "YES ask (c)", "NO ask (c)", "Stat")]
-            cols = ["Win % (market)", "Pick", "Market"] + [k for k in cols if k not in ("Win % (market)", "Pick", "Market")]
+            lead = ["Win % (market)", "My win %", "Edge (pts)", "Pick", "Market"]
+            cols = lead + [k for k in cols if k not in lead]
             if show_codes:
                 cols += ["YES bid (c)", "YES ask (c)", "NO ask (c)", "Kalshi Contract"]
             if show_filtered:
                 cols.append("Filtered")
             st.dataframe(pd.DataFrame(shown)[cols], hide_index=True, width="stretch", height=min(700, 60 + 35 * len(shown)),
                          column_config={"Win % (market)": st.column_config.NumberColumn("Win %", format="%.1f%%", width="small"),
+                                        "My win %": st.column_config.NumberColumn("My %", format="%.1f%%", width="small"),
+                                        "Edge (pts)": st.column_config.NumberColumn("Edge", format="%+.1f", width="small"),
+                                        "Break-even %": st.column_config.NumberColumn(format="%.1f%%", width="small"),
                                         "Pick": st.column_config.TextColumn(width="small"),
                                         "Market": st.column_config.TextColumn(width="medium"),
                                         "Kalshi Contract": st.column_config.TextColumn(width="small")})
-            st.caption("Win % (market) is the chance Kalshi's own prices imply for the Pick side (midpoint of bid and ask). "
-                       "It is the market's estimate, not an independent prediction: a 90% pick costs about 90c to win $1.")
+            st.caption("Win % is the chance Kalshi's own prices imply for the Pick side. My % is a separate estimate from the "
+                       "player's game log (this season weighted most, last season less). Edge = My % minus Break-even % (price "
+                       "plus fee); positive means the game log thinks the pick wins more often than the price needs. The model "
+                       "does not know about tonight's injuries, minutes limits, opponent or role changes, so a big Edge often "
+                       "means the market knows something it doesn't. Blank My % = not enough games or name not matched.")
         else:
             st.info("No Kalshi prop markets pass the filter yet. Check the Diagnostics tab to see which series returned markets.")
     with t_arb:
@@ -116,7 +124,8 @@ def kalshi_only(snap: dict, now: float) -> None:
         st.caption("Series with 0 markets or 'error' are not live tickers. Add the right ones with KALSHI_SERIES in .env.")
         st.dataframe(pd.DataFrame([{"League": lg, "Stat": stt, "Series": tk, "Open markets": str(snap["diag"]["series_counts"].get(tk, ""))}
                                    for (lg, stt), tks in snap["series"].items() for tk in tks]), hide_index=True, width="stretch")
-        st.write(f"Markets parsed: {snap['counts']['kalshi']} (skipped {snap['diag']['unparsed']}).")
+        st.write(f"Markets parsed: {snap['counts']['kalshi']} (skipped {snap['diag']['unparsed']}). "
+                 f"With my win %: {sum(1 for m in snap['matches'] if m.get('model'))}.")
 
 
 @st.fragment(run_every=refresh)

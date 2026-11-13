@@ -178,7 +178,20 @@ class _Espn:
         return parse_injuries(self.w.injuries_payload(lg))
     def rosters(self, path):
         lg = next(l for l, c in LEAGUES.items() if c["espn"] == path)
-        return {norm_name(p[0]): {"team": p[2], "pos": p[3]} for p in PLAYERS if p[1] == lg}
+        return {norm_name(p[0]): {"team": p[2], "pos": p[3], "id": str(i)} for i, p in enumerate(PLAYERS) if p[1] == lg}
+
+    def gamelog(self, path, athlete_id, season=None):
+        from .model import STAT_KEYS
+        name, lg, _team, _pos, stats = PLAYERS[int(athlete_id)]
+        rng = random.Random(f"{athlete_id}-{season}")
+        names = ["minutes"] + [STAT_KEYS[s] for s in stats]
+        n = 20 if season else (12 if lg == "NBA" else 8)
+        evs, rows = {}, []
+        for g in range(n):
+            eid = f"{athlete_id}-{season}-{g}"
+            evs[eid] = {"gameDate": _iso(self.w.t0 - (g + 1) * 3 * 86400 - (300 * 86400 if season else 0))}
+            rows.append({"eventId": eid, "stats": ["33"] + [str(max(0, round(rng.gauss(m, CV[s] * m)))) for s, m in stats.items()]})
+        return {"names": names, "events": evs, "seasonTypes": [{"displayName": "Regular Season", "categories": [{"type": "event", "events": rows}]}]}
 
 
 class _Weather:

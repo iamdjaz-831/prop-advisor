@@ -73,7 +73,8 @@ def build_rows(snap: dict, *, bankroll: float, kelly_frac: float, max_frac: floa
     return rows
 
 
-def kalshi_rows(snap: dict, *, max_spread: float, min_size: float, min_volume: float) -> list[dict]:
+def kalshi_rows(snap: dict, *, max_spread: float, min_size: float, min_volume: float,
+                fee_rate: float = 0.07, fee_mult: float = 1.0) -> list[dict]:
     """Kalshi-only view: live prop quotes with the liquidity filter, no fair value."""
     out_names = {k[1]: v for k, v in snap["injuries"].items() if v["bucket"] in ("OUT", "DOUBTFUL", "QUESTIONABLE")}
     rows = []
@@ -94,12 +95,22 @@ def kalshi_rows(snap: dict, *, max_spread: float, min_size: float, min_volume: f
         # Market-implied chance: the midpoint of Kalshi's own bid and ask for YES.
         mid = (kq.yes_bid + kq.yes_ask) / 2 if spread is not None else None
         yes_side = mid is None or mid >= 0.5
+        cost = kq.yes_ask if yes_side else kq.no_ask
+        # what the pick must win to break even: price plus the taker fee
+        be = None if cost is None else 100 * (cost + fee_rate * fee_mult * cost * (1 - cost))
+        mdl = m.get("model")
+        mine = None if not mdl else 100 * (mdl["p_over"] if yes_side else 1 - mdl["p_over"])
         rows.append({"League": kq.league, "Market": kq.title, "Pick": "YES" if yes_side else "NO",
                      "Win % (market)": None if mid is None else round(100 * max(mid, 1 - mid), 1),
-                     "Cost (c)": c(kq.yes_ask if yes_side else kq.no_ask),
+                     "My win %": None if mine is None else round(mine, 1),
+                     "Edge (pts)": None if mine is None or be is None else round(mine - be, 1),
+                     "Break-even %": None if be is None else round(be, 1),
+                     "Cost (c)": c(cost),
                      "Spread (c)": c(spread),
                      "Size @ ask": kq.yes_ask_size if yes_side else kq.no_ask_size,
                      "24h Vol": kq.volume_24h, "Flags": " | ".join(flags),
+                     "Avg": None if not mdl else round(mdl["avg"], 1),
+                     "Games": None if not mdl else f"{mdl['n_cur']} now + {mdl['n'] - mdl['n_cur']} last yr",
                      "Stat": LEAGUES[kq.league]["stats"][kq.stat]["label"],
                      "YES bid (c)": c(kq.yes_bid), "YES ask (c)": c(kq.yes_ask), "NO ask (c)": c(kq.no_ask),
                      "Kalshi Contract": kq.ticker, "Filtered": ", ".join(why)})

@@ -76,10 +76,17 @@ class EspnClient:
             for a in athletes:
                 nm = a.get("displayName") or a.get("fullName")
                 if nm:
-                    out[norm_name(nm)] = {"team": t.get("displayName", ""),
+                    out[norm_name(nm)] = {"team": t.get("displayName", ""), "id": str(a.get("id") or ""),
                                           "pos": (a.get("position") or {}).get("abbreviation") or ""}
             time.sleep(0.05)
         return out
+
+
+    def gamelog(self, league_path: str, athlete_id: str, season: int | None = None) -> dict:
+        r = self.s.get(f"https://site.web.api.espn.com/apis/common/v3/sports/{league_path}/athletes/{athlete_id}/gamelog",
+                       params={"season": season} if season else None, timeout=self.timeout)
+        r.raise_for_status()
+        return r.json()
 
 
 class InjuryMonitor:

@@ -31,6 +31,7 @@ class KalshiQuote:
     volume_24h: float | None
     close_ts: float | None
     ts: float
+    who: str = ""         # normalised player name from the title ("Name: 25+ points")
 
 
 class KalshiClient:
@@ -147,6 +148,14 @@ def strike_to_line(raw: dict) -> tuple[float, str] | None:
     return None
 
 
+def _who(raw: dict) -> str:
+    for k in ("yes_sub_title", "title"):
+        t = str(raw.get(k) or "")
+        if ":" in t:
+            return norm_name(t.split(":")[0])
+    return ""
+
+
 def parse_market(raw: dict, league: str, stat: str, now: float) -> KalshiQuote | None:
     sl = strike_to_line(raw)
     if not sl or not raw.get("ticker"):
@@ -167,5 +176,5 @@ def parse_market(raw: dict, league: str, stat: str, now: float) -> KalshiQuote |
         no_ask_size=_num(raw, "yes_bid_size_fp", "yes_bid_size"),
         volume_24h=_num(raw, "volume_24h_fp", "volume_24h"),
         close_ts=_iso(raw.get("expected_expiration_time")) or _iso(raw.get("close_time")),
-        ts=now,
+        ts=now, who=_who(raw),
     )

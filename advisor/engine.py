@@ -8,6 +8,7 @@ import traceback
 from .config import LEAGUES, Settings
 from .injuries import EspnClient, InjuryMonitor
 from .kalshi import KalshiClient, discover_series, parse_market
+from .model import estimate, parse_gamelog, prev_season
 from .names import norm_team
 from .odds import OddsApiClient, parse_event_odds
 from .signals import SteamDetector
@@ -35,12 +36,15 @@ class Engine:
         self.weather: dict = {}           # event_id -> conditions
         self.inj = InjuryMonitor(settings.recent_injury_hours)
         self.steam = SteamDetector(settings.steam_window_s, settings.steam_min_dp)
+        self.gamelogs: dict = {}          # (league, player) -> {"ts", "ok", "games"}
+        self._memo: dict = {}             # (league, player, stat, line, log ts) -> estimate
         self.status: dict = {}
         self.diag: dict = {"series_counts": {}, "unparsed": 0}
         self._tasks = [  # name, fn, interval
             ["series", self._poll_series, 3600], ["rosters", self._poll_rosters, 12 * 3600],
             ["odds", self._poll_odds, settings.odds_poll_s], ["kalshi", self._poll_kalshi, settings.kalshi_poll_s],
             ["injuries", self._poll_injuries, settings.injury_poll_s], ["weather", self._poll_weather, settings.weather_poll_s],
+            ["gamelogs", self._poll_gamelogs, 15],
         ]
         if self.c.get("odds") is None:  # Kalshi-only mode: no sharp feed, so no games/weather either
             self._tasks = [t for t in self._tasks if t[0] not in ("odds", "weather")]
@@ -186,6 +190,43 @@ class Engine:
             self.weather = out
         return f"{len(out)} outdoor NFL games, {sum(1 for w in out.values() if w['flag'])} flagged"
 
+    def _poll_gamelogs(self) -> str:
+        """Load game logs a few players at a time, only for players Kalshi lists props on."""
+        now, want = self.now(), {}
+        with self.lock:
+            for kq in self.kalshi.values():
+                r = self.rosters.get(kq.league, {}).get(kq.who)
+                if r and r.get("id"):
+                    want[(kq.league, kq.who)] = r["id"]
+            due = [k for k in want if k not in self.gamelogs
+                   or now - self.gamelogs[k]["ts"] > (6 * 3600 if self.gamelogs[k]["ok"] else 1800)]
+        fails = 0
+        for k in due[:25]:
+            path = LEAGUES[k[0]]["espn"]
+            try:
+                games = parse_gamelog(self.c["espn"].gamelog(path, want[k]), True)
+                games += parse_gamelog(self.c["espn"].gamelog(path, want[k], prev_season(k[0], now)), False)
+                ok = True
+            except Exception:
+                games, ok, fails = [], False, fails + 1
+            with self.lock:
+                self.gamelogs[k] = {"ts": now, "ok": ok, "games": games}
+            if not self.cfg.demo:
+                time.sleep(0.1)
+        done = sum(1 for k in want if k in self.gamelogs and self.gamelogs[k]["ok"])
+        return f"game logs for {done} of {len(want)} players" + (f", {fails} failed this pass" if fails else "")
+
+    def _model(self, kq) -> dict | None:
+        log = self.gamelogs.get((kq.league, kq.who))
+        if not log or not log["games"]:
+            return None
+        key = (kq.league, kq.who, kq.stat, kq.line, log["ts"])
+        if key not in self._memo:
+            if len(self._memo) > 50000:
+                self._memo.clear()
+            self._memo[key] = estimate(log["games"], kq.league, kq.stat, kq.line)
+        return self._memo[key]
+
     # ---------- read side ----------
     def snapshot(self) -> dict:
         with self.lock:
@@ -209,7 +250,7 @@ class Engine:
                     player = next(iter(lines.values())).player
                 else:
                     player = kq.title
-                matches.append({"kq": kq, "sq": sq, "player": player, "nearest_line": near})
+                matches.append({"kq": kq, "sq": sq, "player": player, "nearest_line": near, "model": self._model(kq)})
             return {
                 "now": now, "matches": matches, "alerts": self.steam.alerts(now, matches),
                 "injuries": dict(self.inj.current), "changes": list(self.inj.changes),

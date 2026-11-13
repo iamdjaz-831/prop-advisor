@@ -11,9 +11,8 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-With no key it runs in **Kalshi-only mode**: live Kalshi prices, market-implied win %, and injuries, but no
-sportsbook fair value. For the full +EV board, copy `.env.example` to `.env`, set `ODDS_API_KEY`
-(from the-odds-api.com) and restart. Set `DEMO_MODE=1` to see every panel with simulated data.
+With no key it starts in **demo mode** (simulated players and prices) so you can see every panel working.
+For live data, copy `.env.example` to `.env`, set `ODDS_API_KEY` (from the-odds-api.com) and restart.
 Kalshi market data, ESPN injuries and Open-Meteo weather need no keys.
 
 Tests: `python -m unittest discover -s tests -v`
